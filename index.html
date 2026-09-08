@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KMZ & CadMapper to DXF Generator</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  
+  <!-- FontAwesome & Google Fonts -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+    body { display: flex; flex-direction: column; height: 100vh; background-color: #0f172a; color: #f8fafc; }
+    
+    header {
+      background: #1e293b; padding: 12px 20px;
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid #334155; z-index: 1000;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; display: flex; align-items: center; gap: 10px; color: #38bdf8; }
+
+    .main-container { display: flex; flex: 1; overflow: hidden; position: relative; }
+
+    /* Sidebar / Control Panel */
+    .sidebar {
+      width: 380px; background: #1e293b; border-right: 1px solid #334155;
+      display: flex; flex-direction: column; z-index: 999;
+    }
+    .sidebar-content { padding: 20px; overflow-y: auto; flex: 1; }
+
+    .step-card {
+      background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+      padding: 15px; margin-bottom: 16px;
+    }
+    .step-title {
+      font-weight: 600; font-size: 0.9rem; color: #38bdf8; margin-bottom: 10px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .step-badge {
+      background: #0284c7; color: #fff; border-radius: 50%;
+      width: 22px; height: 22px; font-size: 0.75rem;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+
+    /* Form Inputs */
+    .file-dropzone {
+      border: 2px dashed #475569; border-radius: 6px; padding: 15px;
+      text-align: center; background: #1e293b; cursor: pointer; transition: 0.2s;
+    }
+    .file-dropzone:hover { border-color: #38bdf8; background: #0f172a; }
+    .file-dropzone input { display: none; }
+    .file-dropzone i { font-size: 1.5rem; color: #94a3b8; margin-bottom: 6px; }
+    .file-dropzone p { font-size: 0.8rem; color: #94a3b8; }
+
+    .form-group { margin-bottom: 12px; }
+    .form-group label { display: block; font-size: 0.8rem; font-weight: 500; color: #cbd5e1; margin-bottom: 4px; }
+    .form-control {
+      width: 100%; padding: 8px 12px; border: 1px solid #334155; background: #0f172a; color: #fff;
+      border-radius: 6px; font-size: 0.85rem; outline: none;
+    }
+    .form-control:focus { border-color: #38bdf8; }
+
+    .selection-stats {
+      background: #1e293b; border: 1px solid #334155; border-radius: 6px;
+      padding: 10px; margin-top: 10px; font-size: 0.8rem;
+    }
+    .stats-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+
+    /* Buttons */
+    .btn {
+      width: 100%; padding: 10px; border: none; border-radius: 6px;
+      font-weight: 600; font-size: 0.85rem; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      transition: background 0.2s;
+    }
+    .btn-primary { background: #0284c7; color: #fff; }
+    .btn-primary:hover { background: #0369a1; }
+    .btn-emerald { background: #10b981; color: #fff; }
+    .btn-emerald:hover { background: #059669; }
+    .btn:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+
+    /* Map Area */
+    #map { flex: 1; height: 100%; background: #020617; }
+    .leaflet-popup-content-wrapper { background: #1e293b; color: #fff; border-radius: 8px; font-size: 0.85rem; }
+  </style>
+
+  <!-- JS Libraries -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/togeojson/0.16.0/togeojson.min.js"></script>
+</head>
+<body>
+
+  <header>
+    <h1><i class="fa-solid fa-map-location-dot"></i> CadMapper & KMZ to DXF Generator</h1>
+    <span style="font-size: 0.8rem; color: #94a3b8;">Clean Name Marker & Folder Layers</span>
+  </header>
+
+  <div class="main-container">
+    <div class="sidebar">
+      <div class="sidebar-content">
+        
+        <!-- Step 1: Input Source -->
+        <div class="step-card">
+          <div class="step-title"><span class="step-badge">1</span> Input Sumber Data</div>
+          
+          <div class="file-dropzone" id="dropzone" onclick="document.getElementById('kmz-input').click()">
+            <i class="fa-solid fa-file-arrow-up"></i>
+            <p>Upload <strong>.KMZ / .KML</strong> (Penanda & Garis KMZ)</p>
+            <input type="file" id="kmz-input" accept=".kmz,.kml" onchange="handleFileUpload(event)">
+          </div>
+
+          <p style="text-align: center; margin: 10px 0; font-size: 0.75rem; color: #64748b;">— TAMBAHKAN JALAN DARI MAP —</p>
+
+          <button class="btn btn-emerald" id="fetch-osm-btn" onclick="fetchOSMData()">
+            <i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM (Area Peta)
+          </button>
+        </div>
+
+        <!-- Step 2: Statistics & Target -->
+        <div class="step-card">
+          <div class="step-title"><span class="step-badge">2</span> Data Terdeteksi</div>
+          <div class="selection-stats">
+            <div class="stats-row"><span>Jalan OSM (Map):</span> <strong id="stat-osm-roads" style="color:#38bdf8;">0</strong></div>
+            <div class="stats-row"><span>Garis KMZ (Asli):</span> <strong id="stat-kmz-lines" style="color:#facc15;">0</strong></div>
+            <div class="stats-row"><span>Penanda (Points):</span> <strong id="stat-points" style="color:#34d399;">0</strong></div>
+            <div class="stats-row"><span>Jumlah Folder KMZ:</span> <strong id="stat-folders" style="color:#a855f7;">0</strong></div>
+          </div>
+        </div>
+
+        <!-- Step 3: Options & Export -->
+        <div class="step-card">
+          <div class="step-title"><span class="step-badge">3</span> Pengaturan DXF</div>
+
+          <div class="form-group">
+            <label>Pengali Lebar Jalan OSM:</label>
+            <select id="opt-road-scale" class="form-control">
+              <option value="1.0" selected>Normal (Sesuai Hirarki Asli Map)</option>
+              <option value="1.3">Lebar (+30%)</option>
+              <option value="1.5">Sangat Lebar (+50%)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Ukuran Teks Nama Penanda (Meter):</label>
+            <input type="number" id="opt-text-size" class="form-control" value="4.0" step="0.5">
+          </div>
+
+          <button class="btn btn-primary" id="export-btn" onclick="exportToDXF()" disabled>
+            <i class="fa-solid fa-file-export"></i> Ekspor File DXF
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Map View -->
+    <div id="map"></div>
+  </div>
+
+  <script>
+    const map = L.map('map').setView([-6.200000, 106.816666], 15);
+
+    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Esri Satellite'
+    });
+
+    L.control.layers({ "Street": osmLayer, "Satellite": satelliteLayer }).addTo(map);
+
+    let osmRoadFeatures = [];
+    let kmzLineFeatures = [];
+    let pointFeatures = [];
+    let detectedFolders = new Set();
+    let leafletLayerGroup = L.layerGroup().addTo(map);
+
+    function latLonToMeters(lat, lon, originLat, originLon) {
+      const R = 6378137;
+      const x = (lon - originLon) * (Math.PI / 180) * R * Math.cos(originLat * Math.PI / 180);
+      const y = (lat - originLat) * (Math.PI / 180) * R;
+      return { x, y };
+    }
+
+    function sanitizeLayerName(name) {
+      if (!name) return "KMZ_DEFAULT";
+      return name.toUpperCase()
+                 .replace(/[^A-Z0-9_\-]/g, "_")
+                 .substring(0, 31);
+    }
+
+    function getRoadWidthByHighwayType(highwayType) {
+      switch (highwayType) {
+        case 'motorway': case 'trunk': return 14.0;
+        case 'primary': return 11.0;
+        case 'secondary': return 8.5;
+        case 'tertiary': return 7.0;
+        case 'residential': case 'unclassified': return 5.5;
+        case 'service': return 4.0;
+        case 'track': case 'footway': case 'path': case 'pedestrian': return 2.5;
+        default: return 6.0;
+      }
+    }
+
+    function hexToACI(hexColor) {
+      if (!hexColor) return 1;
+      let hex = hexColor.replace("#", "").trim();
+      if (hex.length === 8) hex = hex.substring(2);
+      if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+
+      const r = parseInt(hex.substr(0, 2), 16) || 0;
+      const g = parseInt(hex.substr(2, 2), 16) || 0;
+      const b = parseInt(hex.substr(4, 2), 16) || 0;
+
+      if (r > 200 && g < 100 && b < 100) return 1; // Merah
+      if (r > 200 && g > 200 && b < 100) return 2; // Kuning
+      if (r < 100 && g > 180 && b < 100) return 3; // Hijau
+      if (r < 100 && g > 180 && b > 180) return 4; // Cyan
+      if (r < 100 && g < 100 && b > 200) return 5; // Biru
+      if (r > 180 && g < 100 && b > 180) return 6; // Magenta
+      return 1;
+    }
+
+    function parseKMLFoldersAndStyles(xmlDoc) {
+      const styleMap = new Map();
+      const placemarkFolderMap = new Map();
+
+      xmlDoc.querySelectorAll("Style").forEach(style => {
+        const id = style.getAttribute("id");
+        const iconColor = style.querySelector("IconStyle > color")?.textContent;
+        const lineColor = style.querySelector("LineStyle > color")?.textContent;
+        
+        let hex = "FF0000";
+        const rawColor = iconColor || lineColor;
+        if (rawColor && rawColor.length === 8) {
+          hex = rawColor.substr(6, 2) + rawColor.substr(4, 2) + rawColor.substr(2, 2);
+        }
+        if (id) styleMap.set("#" + id, hex);
+      });
+
+      function traverseFolder(element, currentFolderName) {
+        element.childNodes.forEach(node => {
+          if (node.nodeType === 1) {
+            let folderName = currentFolderName;
+            
+            if (node.tagName === "Folder") {
+              const nameEl = node.querySelector(":scope > name");
+              if (nameEl) folderName = nameEl.textContent.trim();
+            }
+
+            if (node.tagName === "Placemark") {
+              const nameEl = node.querySelector(":scope > name");
+              const pName = nameEl ? nameEl.textContent.trim() : "";
+              placemarkFolderMap.set(pName, folderName);
+            }
+
+            traverseFolder(node, folderName);
+          }
+        });
+      }
+
+      traverseFolder(xmlDoc.documentElement, "KMZ_DEFAULT");
+      return { styleMap, placemarkFolderMap };
+    }
+
+    function processGeoJSON(data, isKMZ = false, styleMap = new Map(), placemarkFolderMap = new Map()) {
+      if (!data.features) return;
+
+      data.features.forEach(feat => {
+        const gType = feat.geometry.type;
+        const rawName = feat.properties.name || "PENANDA";
+        const styleUrl = feat.properties.styleUrl;
+        
+        let folderName = placemarkFolderMap.get(rawName) || feat.properties.folder || "KMZ_DEFAULT";
+        folderName = sanitizeLayerName(folderName);
+
+        if (isKMZ) detectedFolders.add(folderName);
+
+        let hexColor = "FF0000";
+        if (styleUrl && styleMap.has(styleUrl)) {
+          hexColor = styleMap.get(styleUrl);
+        } else if (feat.properties.color) {
+          hexColor = feat.properties.color;
+        }
+
+        let cleanMarkerName = rawName.replace(/^\[.*?\]\s*/, '').trim();
+
+        feat.properties._cleanName = cleanMarkerName;
+        feat.properties._aciColor = hexToACI(hexColor);
+        feat.properties._hexColor = "#" + hexColor;
+        feat.properties._folderLayer = folderName;
+
+        if (gType === "LineString" || gType === "MultiLineString") {
+          if (isKMZ) {
+            kmzLineFeatures.push(feat);
+          } else {
+            osmRoadFeatures.push(feat);
+          }
+        } else if (gType === "Point") {
+          pointFeatures.push(feat);
+        }
+      });
+
+      renderMapLayers();
+    }
+
+    function renderMapLayers() {
+      leafletLayerGroup.clearLayers();
+
+      const osmLayer = L.geoJSON({ type: "FeatureCollection", features: osmRoadFeatures }, {
+        style: { color: "#38bdf8", weight: 3 }
+      });
+
+      const kmzLinesLayer = L.geoJSON({ type: "FeatureCollection", features: kmzLineFeatures }, {
+        style: f => ({ color: f.properties._hexColor || "#facc15", weight: 4 })
+      });
+
+      const pointsLayer = L.geoJSON({ type: "FeatureCollection", features: pointFeatures }, {
+        pointToLayer: (f, latlng) => {
+          const marker = L.circleMarker(latlng, {
+            radius: 6,
+            fillColor: f.properties._hexColor || "#eab308",
+            color: "#ffffff",
+            weight: 2,
+            fillOpacity: 1
+          });
+          const displayName = f.properties._cleanName || f.properties.name || "PENANDA";
+          marker.bindTooltip(displayName, { permanent: true, direction: 'top' });
+          return marker;
+        }
+      });
+
+      leafletLayerGroup.addLayer(osmLayer);
+      leafletLayerGroup.addLayer(kmzLinesLayer);
+      leafletLayerGroup.addLayer(pointsLayer);
+
+      const allLayersGroup = L.featureGroup([osmLayer, kmzLinesLayer, pointsLayer]);
+      if (allLayersGroup.getLayers().length > 0) {
+        const bounds = allLayersGroup.getBounds();
+        if (bounds.isValid()) {
+          map.fitBounds(bounds, { padding: [50, 50] });
+        }
+      }
+
+      document.getElementById('stat-osm-roads').innerText = osmRoadFeatures.length;
+      document.getElementById('stat-kmz-lines').innerText = kmzLineFeatures.length;
+      document.getElementById('stat-points').innerText = pointFeatures.length;
+      document.getElementById('stat-folders').innerText = detectedFolders.size;
+      document.getElementById('export-btn').disabled = false;
+    }
+
+    async function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      try {
+        let kmlText = "";
+        if (file.name.endsWith('.kmz')) {
+          const zip = await JSZip.loadAsync(file);
+          const kmlFile = Object.keys(zip.files).find(name => name.endsWith('.kml'));
+          if (!kmlFile) throw new Error("File doc.kml tidak ditemukan di KMZ!");
+          kmlText = await zip.files[kmlFile].async("string");
+        } else {
+          kmlText = await file.text();
+        }
+
+        const parser = new DOMParser();
+        const kmlDoc = parser.parseFromString(kmlText, "text/xml");
+        const { styleMap, placemarkFolderMap } = parseKMLFoldersAndStyles(kmlDoc);
+        const geojsonData = toGeoJSON.kml(kmlDoc);
+
+        processGeoJSON(geojsonData, true, styleMap, placemarkFolderMap);
+        alert(`Berhasil memuat KMZ! Terdeteksi ${pointFeatures.length} Penanda, ${kmzLineFeatures.length} Garis, dan ${detectedFolders.size} Folder.`);
+      } catch (err) {
+        alert("Gagal membaca file KMZ/KML: " + err.message);
+      }
+    }
+
+    // PENGAMBILAN DATA OSM TEMBUS CORS (MENGGUNAKAN OVERPASS INTERPRETER VIA GET / SCRIPT INJECTION)
+    function fetchOSMData() {
+      const bounds = map.getBounds();
+      
+      if (map.getZoom() < 13) {
+        alert("Area peta terlalu luas! Silakan zoom in peta ke area lokasi jalan terlebih dahulu.");
+        return;
+      }
+
+      const btn = document.getElementById('fetch-osm-btn');
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Mengambil Data OSM...';
+      btn.disabled = true;
+
+      const s = bounds.getSouth();
+      const w = bounds.getWest();
+      const n = bounds.getNorth();
+      const e = bounds.getEast();
+
+      // Query Overpass
+      const q = `[out:json][timeout:25];way["highway"](${s},${w},${n},${e});out body;>;out skel qt;`;
+      
+      // Menggunakan Endpoint Overpass API Publik yang mendukung GET Request
+      const url = "https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(q);
+
+      fetch(url)
+        .then(res => {
+          if (!res.ok) throw new Error("HTTP Status " + res.status);
+          return res.json();
+        })
+        .then(data => {
+          if (!data || !data.elements) throw new Error("Data OSM kosong");
+
+          const nodes = {};
+          data.elements.forEach(el => {
+            if (el.type === "node") nodes[el.id] = [el.lon, el.lat];
+          });
+
+          const osmFeatures = [];
+          data.elements.forEach(el => {
+            if (el.type === "way" && el.nodes) {
+              const coords = el.nodes.map(nid => nodes[nid]).filter(c => c !== undefined);
+              if (coords.length > 1) {
+                osmFeatures.push({
+                  type: "Feature",
+                  geometry: { type: "LineString", coordinates: coords },
+                  properties: { 
+                    name: el.tags ? el.tags.name || "Road" : "Road",
+                    highway: el.tags ? el.tags.highway || "residential" : "residential"
+                  }
+                });
+              }
+            }
+          });
+
+          processGeoJSON({ type: "FeatureCollection", features: osmFeatures }, false);
+          btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM (Area Peta)';
+          btn.disabled = false;
+        })
+        .catch(err => {
+          console.warn("Mencoba Endpoint Backup Overpass...", err);
+          
+          // Endpoint Cadangan 2
+          const backupUrl = "https://overpass.kumi.systems/api/interpreter?data=" + encodeURIComponent(q);
+          fetch(backupUrl)
+            .then(res => res.json())
+            .then(data => {
+              const nodes = {};
+              data.elements.forEach(el => { if (el.type === "node") nodes[el.id] = [el.lon, el.lat]; });
+
+              const osmFeatures = [];
+              data.elements.forEach(el => {
+                if (el.type === "way" && el.nodes) {
+                  const coords = el.nodes.map(nid => nodes[nid]).filter(c => c !== undefined);
+                  if (coords.length > 1) {
+                    osmFeatures.push({
+                      type: "Feature",
+                      geometry: { type: "LineString", coordinates: coords },
+                      properties: { 
+                        name: el.tags ? el.tags.name || "Road" : "Road",
+                        highway: el.tags ? el.tags.highway || "residential" : "residential"
+                      }
+                    });
+                  }
+                }
+              });
+
+              processGeoJSON({ type: "FeatureCollection", features: osmFeatures }, false);
+              btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM (Area Peta)';
+              btn.disabled = false;
+            })
+            .catch(err2 => {
+              alert("Gagal mengambil data jalan dari server OSM. Mohon zoom in sedikit lagi agar wilayah lebih fokus.");
+              btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM (Area Peta)';
+              btn.disabled = false;
+            });
+        });
+    }
+
+    function computeParallelRoadOffsets(coordList, distance, originLat, originLon) {
+      if (coordList.length < 2) return null;
+
+      const pts = coordList.map(c => latLonToMeters(c[1], c[0], originLat, originLon));
+      const leftPts = [];
+      const rightPts = [];
+
+      for (let i = 0; i < pts.length; i++) {
+        let nx = 0, ny = 0;
+
+        if (i === 0) {
+          const dx = pts[1].x - pts[0].x;
+          const dy = pts[1].y - pts[0].y;
+          const len = Math.hypot(dx, dy);
+          if (len > 0) { nx = -dy / len; ny = dx / len; }
+        } else if (i === pts.length - 1) {
+          const dx = pts[i].x - pts[i - 1].x;
+          const dy = pts[i].y - pts[i - 1].y;
+          const len = Math.hypot(dx, dy);
+          if (len > 0) { nx = -dy / len; ny = dx / len; }
+        } else {
+          const dx1 = pts[i].x - pts[i - 1].x;
+          const dy1 = pts[i].y - pts[i - 1].y;
+          const len1 = Math.hypot(dx1, dy1);
+
+          const dx2 = pts[i + 1].x - pts[i].x;
+          const dy2 = pts[i + 1].y - pts[i].y;
+          const len2 = Math.hypot(dx2, dy2);
+
+          if (len1 > 0 && len2 > 0) {
+            const nx1 = -dy1 / len1, ny1 = dx1 / len1;
+            const nx2 = -dy2 / len2, ny2 = dx2 / len2;
+            nx = (nx1 + nx2) / 2;
+            ny = (ny1 + ny2) / 2;
+            const nLen = Math.hypot(nx, ny);
+            if (nLen > 0) { nx /= nLen; ny /= nLen; }
+          }
+        }
+
+        leftPts.push({ x: pts[i].x + nx * distance, y: pts[i].y + ny * distance });
+        rightPts.push({ x: pts[i].x - nx * distance, y: pts[i].y - ny * distance });
+      }
+
+      return { leftPts, rightPts };
+    }
+
+    function exportToDXF() {
+      if (osmRoadFeatures.length === 0 && kmzLineFeatures.length === 0 && pointFeatures.length === 0) {
+        alert("Tidak ada data untuk diekspor!");
+        return;
+      }
+
+      const roadScale = parseFloat(document.getElementById('opt-road-scale').value) || 1.0;
+      const textSize = parseFloat(document.getElementById('opt-text-size').value) || 4.0;
+
+      let originLat = -6.200000;
+      let originLon = 106.816666;
+
+      if (pointFeatures.length > 0) {
+        const firstCoord = pointFeatures[0].geometry.coordinates;
+        originLon = firstCoord[0]; originLat = firstCoord[1];
+      } else if (kmzLineFeatures.length > 0) {
+        const firstCoord = kmzLineFeatures[0].geometry.coordinates[0];
+        originLon = firstCoord[0]; originLat = firstCoord[1];
+      } else if (osmRoadFeatures.length > 0) {
+        const firstCoord = osmRoadFeatures[0].geometry.coordinates[0];
+        originLon = firstCoord[0]; originLat = firstCoord[1];
+      }
+
+      let dxf = [];
+
+      dxf.push("0", "SECTION", "2", "HEADER");
+      dxf.push("9", "$ACADVER", "1", "AC1009");
+      dxf.push("0", "ENDSEC");
+
+      dxf.push("0", "SECTION", "2", "TABLES");
+      
+      const allLayers = new Set(["OSM_ROADS", "LABELS"]);
+      detectedFolders.forEach(folder => {
+        allLayers.add(folder);
+        allLayers.add(folder + "_POINTS");
+      });
+
+      dxf.push("0", "TABLE", "2", "LAYER", "70", allLayers.size.toString());
+      
+      dxf.push("0", "LAYER", "2", "OSM_ROADS", "70", "0", "62", "4", "6", "CONTINUOUS");
+      dxf.push("0", "LAYER", "2", "LABELS", "70", "0", "62", "2", "6", "CONTINUOUS");
+
+      detectedFolders.forEach(folder => {
+        dxf.push("0", "LAYER", "2", folder, "70", "0", "62", "1", "6", "CONTINUOUS");
+        dxf.push("0", "LAYER", "2", folder + "_POINTS", "70", "0", "62", "1", "6", "CONTINUOUS");
+      });
+
+      dxf.push("0", "ENDTAB");
+      dxf.push("0", "ENDSEC");
+
+      dxf.push("0", "SECTION", "2", "BLOCKS", "0", "ENDSEC");
+      dxf.push("0", "SECTION", "2", "ENTITIES");
+
+      osmRoadFeatures.forEach(feat => {
+        const geom = feat.geometry;
+        const hwType = feat.properties.highway || 'residential';
+        const baseWidth = getRoadWidthByHighwayType(hwType) * roadScale;
+        const halfWidth = baseWidth / 2.0;
+
+        const processOsmLine = (coords) => {
+          const offsetRes = computeParallelRoadOffsets(coords, halfWidth, originLat, originLon);
+          if (offsetRes) {
+            writeRawPolyline(dxf, offsetRes.leftPts, "OSM_ROADS", 4);
+            writeRawPolyline(dxf, offsetRes.rightPts, "OSM_ROADS", 4);
+          }
+        };
+
+        if (geom.type === "LineString") {
+          processOsmLine(geom.coordinates);
+        } else if (geom.type === "MultiLineString") {
+          geom.coordinates.forEach(coords => processOsmLine(coords));
+        }
+      });
+
+      kmzLineFeatures.forEach(feat => {
+        const geom = feat.geometry;
+        const colorACI = feat.properties._aciColor || 1;
+        const targetLayer = feat.properties._folderLayer || "KMZ_DEFAULT";
+
+        const processKmzLine = (coords) => {
+          const singlePts = coords.map(c => {
+            const pt = latLonToMeters(c[1], c[0], originLat, originLon);
+            return { x: pt.x, y: pt.y };
+          });
+          writeRawPolyline(dxf, singlePts, targetLayer, colorACI);
+        };
+
+        if (geom.type === "LineString") {
+          processKmzLine(geom.coordinates);
+        } else if (geom.type === "MultiLineString") {
+          geom.coordinates.forEach(coords => processKmzLine(coords));
+        }
+      });
+
+      pointFeatures.forEach(feat => {
+        const [lon, lat] = feat.geometry.coordinates;
+        const pt = latLonToMeters(lat, lon, originLat, originLon);
+        const name = (feat.properties._cleanName || feat.properties.name || "PENANDA").replace(/[\r\n]+/g, " ");
+        const aciColor = feat.properties._aciColor || 1;
+        const targetLayer = (feat.properties._folderLayer || "KMZ_DEFAULT") + "_POINTS";
+
+        dxf.push("0", "POINT");
+        dxf.push("8", targetLayer);
+        dxf.push("62", aciColor.toString());
+        dxf.push("10", pt.x.toFixed(3));
+        dxf.push("20", pt.y.toFixed(3));
+        dxf.push("30", "0.0");
+
+        dxf.push("0", "CIRCLE");
+        dxf.push("8", targetLayer);
+        dxf.push("62", aciColor.toString());
+        dxf.push("10", pt.x.toFixed(3));
+        dxf.push("20", pt.y.toFixed(3));
+        dxf.push("30", "0.0");
+        dxf.push("40", "2.0");
+
+        dxf.push("0", "TEXT");
+        dxf.push("8", "LABELS");
+        dxf.push("62", "2");
+        dxf.push("10", (pt.x + 2.5).toFixed(3));
+        dxf.push("20", (pt.y + 0.5).toFixed(3));
+        dxf.push("30", "0.0");
+        dxf.push("40", textSize.toString());
+        dxf.push("1", name);
+      });
+
+      dxf.push("0", "ENDSEC");
+      dxf.push("0", "EOF");
+
+      const dxfContent = dxf.join("\r\n") + "\r\n";
+      const blob = new Blob([dxfContent], { type: "application/dxf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Cadmapper_CleanName_${new Date().getTime()}.dxf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function writeRawPolyline(dxfArray, pointArray, layerName, colorIndex) {
+      if (!pointArray || pointArray.length < 2) return;
+
+      dxfArray.push("0", "POLYLINE");
+      dxfArray.push("8", layerName);
+      dxfArray.push("62", colorIndex.toString());
+      dxfArray.push("66", "1");
+      dxfArray.push("70", "0");
+
+      pointArray.forEach(pt => {
+        dxfArray.push("0", "VERTEX");
+        dxfArray.push("8", layerName);
+        dxfArray.push("10", pt.x.toFixed(3));
+        dxfArray.push("20", pt.y.toFixed(3));
+        dxfArray.push("30", "0.0");
+      });
+
+      dxfArray.push("0", "SEQEND");
+    }
+  </script>
+</body>
+</html>
