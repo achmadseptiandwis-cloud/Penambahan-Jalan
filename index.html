@@ -98,7 +98,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/togeojson/0.16.0/togeojson.min.js"></script>
 </head>
 <body>
 
@@ -196,7 +195,6 @@
     let detectedFolders = new Set();
     let leafletLayerGroup = L.layerGroup().addTo(map);
 
-    // Variabel Seleksi Kotak Area
     let drawnItems = new L.FeatureGroup().addTo(map);
     let currentSelectionBounds = null;
     let rectangleDrawer = null;
@@ -211,9 +209,7 @@
     });
 
     function toggleDrawBox() {
-      if (rectangleDrawer) {
-        rectangleDrawer.disable();
-      }
+      if (rectangleDrawer) rectangleDrawer.disable();
       rectangleDrawer = new L.Draw.Rectangle(map, {
         shapeOptions: { color: '#38bdf8', weight: 2, fillColor: '#38bdf8', fillOpacity: 0.2 }
       });
@@ -237,9 +233,16 @@
 
     function sanitizeLayerName(name) {
       if (!name) return "KMZ_DEFAULT";
-      return name.toUpperCase()
-                 .replace(/[^A-Z0-9_\-]/g, "_")
-                 .substring(0, 31);
+      let clean = String(name)
+        .replace(/[\r\n\t]/g, "")
+        .replace(/\u00A0/g, " ")
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9_\-]/g, "_")
+        .replace(/_+/g, "_");
+
+      if (clean === "" || clean === "_") return "KMZ_DEFAULT";
+      return clean.substring(0, 31);
     }
 
     function getRoadWidthByHighwayType(highwayType) {
@@ -255,110 +258,90 @@
       }
     }
 
-    function hexToACI(hexColor) {
-      if (!hexColor) return 1;
-      let hex = hexColor.replace("#", "").trim();
-      if (hex.length === 8) hex = hex.substring(2);
-      if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
-
-      const r = parseInt(hex.substr(0, 2), 16) || 0;
-      const g = parseInt(hex.substr(2, 2), 16) || 0;
-      const b = parseInt(hex.substr(4, 2), 16) || 0;
-
-      if (r > 200 && g < 100 && b < 100) return 1; // Merah
-      if (r > 200 && g > 200 && b < 100) return 2; // Kuning
-      if (r < 100 && g > 180 && b < 100) return 3; // Hijau
-      if (r < 100 && g > 180 && b > 180) return 4; // Cyan
-      if (r < 100 && g < 100 && b > 200) return 5; // Biru
-      if (r > 180 && g < 100 && b > 180) return 6; // Magenta
-      return 1;
-    }
-
-    function parseKMLFoldersAndStyles(xmlDoc) {
-      const styleMap = new Map();
-      const placemarkFolderMap = new Map();
-
-      xmlDoc.querySelectorAll("Style").forEach(style => {
-        const id = style.getAttribute("id");
-        const iconColor = style.querySelector("IconStyle > color")?.textContent;
-        const lineColor = style.querySelector("LineStyle > color")?.textContent;
-        
-        let hex = "FF0000";
-        const rawColor = iconColor || lineColor;
-        if (rawColor && rawColor.length === 8) {
-          hex = rawColor.substr(6, 2) + rawColor.substr(4, 2) + rawColor.substr(2, 2);
-        }
-        if (id) styleMap.set("#" + id, hex);
-      });
-
-      function traverseFolder(element, currentFolderName) {
-        element.childNodes.forEach(node => {
-          if (node.nodeType === 1) {
-            let folderName = currentFolderName;
-            
-            if (node.tagName === "Folder") {
-              const nameEl = node.querySelector(":scope > name");
-              if (nameEl) folderName = nameEl.textContent.trim();
-            }
-
-            if (node.tagName === "Placemark") {
-              const nameEl = node.querySelector(":scope > name");
-              const pName = nameEl ? nameEl.textContent.trim() : "";
-              placemarkFolderMap.set(pName, folderName);
-            }
-
-            traverseFolder(node, folderName);
+    function parseCoordinatesString(coordStr) {
+      if (!coordStr) return [];
+      const parts = coordStr.trim().split(/\s+/);
+      const result = [];
+      parts.forEach(p => {
+        const c = p.split(",");
+        if (c.length >= 2) {
+          const lon = parseFloat(c[0]);
+          const lat = parseFloat(c[1]);
+          if (!isNaN(lon) && !isNaN(lat)) {
+            result.push([lon, lat]);
           }
-        });
-      }
-
-      traverseFolder(xmlDoc.documentElement, "KMZ_DEFAULT");
-      return { styleMap, placemarkFolderMap };
+        }
+      });
+      return result;
     }
 
-    function processGeoJSON(data, isKMZ = false, styleMap = new Map(), placemarkFolderMap = new Map()) {
-      if (!data.features) return;
-
-      if (isKMZ) {
-        kmzLineFeatures = [];
-        pointFeatures = [];
-        detectedFolders.clear();
-      }
-
-      data.features.forEach(feat => {
-        const gType = feat.geometry.type;
-        const rawName = feat.properties.name || "PENANDA";
-        const styleUrl = feat.properties.styleUrl;
-        
-        let folderName = placemarkFolderMap.get(rawName) || feat.properties.folder || "KMZ_DEFAULT";
-        folderName = sanitizeLayerName(folderName);
-
-        if (isKMZ) detectedFolders.add(folderName);
-
-        let hexColor = "FF0000";
-        if (styleUrl && styleMap.has(styleUrl)) {
-          hexColor = styleMap.get(styleUrl);
-        } else if (feat.properties.color) {
-          hexColor = feat.properties.color;
+    function findParentFolder(placemarkNode) {
+      let current = placemarkNode.parentNode;
+      while (current && current.nodeType === 1) {
+        if (current.tagName === "Folder") {
+          const nameNode = current.querySelector(":scope > name");
+          if (nameNode && nameNode.textContent.trim() !== "") {
+            return nameNode.textContent.trim();
+          }
         }
+        current = current.parentNode;
+      }
+      return "KMZ_DEFAULT";
+    }
 
+    function parseKMLDirectly(xmlDoc) {
+      kmzLineFeatures = [];
+      pointFeatures = [];
+      detectedFolders.clear();
+
+      const placemarks = xmlDoc.getElementsByTagName("Placemark");
+      
+      for (let i = 0; i < placemarks.length; i++) {
+        const pm = placemarks[i];
+        const nameNode = pm.querySelector("name");
+        const rawName = nameNode ? nameNode.textContent.trim() : "PENANDA";
         let cleanMarkerName = rawName.replace(/^\[.*?\]\s*/, '').trim();
 
-        feat.properties._cleanName = cleanMarkerName;
-        feat.properties._aciColor = hexToACI(hexColor);
-        feat.properties._hexColor = "#" + hexColor;
-        feat.properties._folderLayer = folderName;
+        const rawFolderName = findParentFolder(pm);
+        const layerName = sanitizeLayerName(rawFolderName);
+        detectedFolders.add(layerName);
 
-        if (gType === "LineString" || gType === "MultiLineString") {
-          if (isKMZ) {
-            kmzLineFeatures.push(feat);
-          } else {
-            osmRoadFeatures.push(feat);
+        // 1. Point
+        const pointNode = pm.querySelector("Point");
+        if (pointNode) {
+          const coordNode = pointNode.querySelector("coordinates");
+          const coords = parseCoordinatesString(coordNode ? coordNode.textContent : "");
+          if (coords.length > 0) {
+            pointFeatures.push({
+              type: "Feature",
+              geometry: { type: "Point", coordinates: coords[0] },
+              properties: {
+                name: rawName,
+                _cleanName: cleanMarkerName,
+                _folderLayer: layerName
+              }
+            });
           }
-        } else if (gType === "Point") {
-          pointFeatures.push(feat);
         }
-      });
+
+        // 2. LineString
+        const lineNode = pm.querySelector("LineString");
+        if (lineNode) {
+          const coordNode = lineNode.querySelector("coordinates");
+          const coords = parseCoordinatesString(coordNode ? coordNode.textContent : "");
+          if (coords.length > 0) {
+            kmzLineFeatures.push({
+              type: "Feature",
+              geometry: { type: "LineString", coordinates: coords },
+              properties: {
+                name: rawName,
+                _cleanName: cleanMarkerName,
+                _folderLayer: layerName
+              }
+            });
+          }
+        }
+      }
 
       renderMapLayers();
     }
@@ -371,14 +354,14 @@
       });
 
       const kmzLinesLayer = L.geoJSON({ type: "FeatureCollection", features: kmzLineFeatures }, {
-        style: f => ({ color: f.properties._hexColor || "#facc15", weight: 4 })
+        style: () => ({ color: "#facc15", weight: 4 })
       });
 
       const pointsLayer = L.geoJSON({ type: "FeatureCollection", features: pointFeatures }, {
         pointToLayer: (f, latlng) => {
           const marker = L.circleMarker(latlng, {
             radius: 6,
-            fillColor: f.properties._hexColor || "#eab308",
+            fillColor: "#eab308",
             color: "#ffffff",
             weight: 2,
             fillOpacity: 1
@@ -425,10 +408,8 @@
 
         const parser = new DOMParser();
         const kmlDoc = parser.parseFromString(kmlText, "text/xml");
-        const { styleMap, placemarkFolderMap } = parseKMLFoldersAndStyles(kmlDoc);
-        const geojsonData = toGeoJSON.kml(kmlDoc);
-
-        processGeoJSON(geojsonData, true, styleMap, placemarkFolderMap);
+        
+        parseKMLDirectly(kmlDoc);
         alert(`Berhasil memuat KMZ! Terdeteksi ${pointFeatures.length} Penanda, ${kmzLineFeatures.length} Garis, dan ${detectedFolders.size} Folder.`);
       } catch (err) {
         alert("Gagal membaca file KMZ/KML: " + err.message);
@@ -436,7 +417,6 @@
     }
 
     async function fetchOSMData() {
-      // Bebas zoom: Menggunakan area kotak seleksi jika ada, atau tampilan peta
       const bounds = currentSelectionBounds || map.getBounds();
       
       if (!currentSelectionBounds && map.getZoom() < 13) {
@@ -453,10 +433,8 @@
       const n = bounds.getNorth();
       const e = bounds.getEast();
 
-      // Kueri Ringan & Cepat (out geom)
       const q = `[out:json][timeout:30];way["highway"](${s},${w},${n},${e});out geom;`;
 
-      // Daftar Endpoint Server Overpass Publik Terpercaya
       const endpoints = [
         "https://overpass-api.de/api/interpreter",
         "https://overpass.private.coffee/api/interpreter",
@@ -476,11 +454,11 @@
             throw new Error("Data jalan OSM tidak ditemukan di area ini.");
           }
 
-          const osmFeatures = [];
+          osmRoadFeatures = [];
           data.elements.forEach(el => {
             if (el.type === "way" && el.geometry && el.geometry.length > 1) {
               const coords = el.geometry.map(pt => [pt.lon, pt.lat]);
-              osmFeatures.push({
+              osmRoadFeatures.push({
                 type: "Feature",
                 geometry: { type: "LineString", coordinates: coords },
                 properties: { 
@@ -491,15 +469,11 @@
             }
           });
 
-          if (osmFeatures.length === 0) {
-            throw new Error("Tidak ada fitur garis jalan yang dapat diproses.");
-          }
-
-          processGeoJSON({ type: "FeatureCollection", features: osmFeatures }, false);
+          renderMapLayers();
           btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM';
           btn.disabled = false;
           success = true;
-          break; // Berhasil, keluar dari loop server
+          break;
         } catch (err) {
           console.warn(`Gagal dari endpoint ${endpoints[i]}:`, err.message);
         }
@@ -558,6 +532,7 @@
       return { leftPts, rightPts };
     }
 
+    // FORMULA GENERATOR DXF R12 RESMI (VALID TERBUKA TANPA BLANK/ERROR)
     function exportToDXF() {
       if (osmRoadFeatures.length === 0 && kmzLineFeatures.length === 0 && pointFeatures.length === 0) {
         alert("Tidak ada data untuk diekspor!");
@@ -567,7 +542,6 @@
       const roadScale = parseFloat(document.getElementById('opt-road-scale').value) || 1.0;
       const textSize = parseFloat(document.getElementById('opt-text-size').value) || 4.0;
 
-      // Penentuan Otomatis Titik Pusat (Origin Point)
       let originLat = -6.200000;
       let originLon = 106.816666;
 
@@ -584,37 +558,38 @@
 
       let dxf = [];
 
+      // 1. HEADER SECTION (Format R12 / AC1009 Kuno Namun Valid Universal)
       dxf.push("0", "SECTION");
       dxf.push("2", "HEADER");
       dxf.push("9", "$ACADVER");
       dxf.push("1", "AC1009");
       dxf.push("0", "ENDSEC");
 
+      // 2. TABLES SECTION (Daftar Layer)
       dxf.push("0", "SECTION");
       dxf.push("2", "TABLES");
 
-      const allLayers = new Set(["OSM_ROADS"]);
-      detectedFolders.forEach(folder => {
-        allLayers.add(folder);
-        allLayers.add(folder + "_POINTS");
-        allLayers.add(folder + "_LABELS"); // Dipisah agar LAYOFF bekerja independen
-      });
+      const layerList = Array.from(detectedFolders);
+      if (!layerList.includes("KMZ_DEFAULT")) layerList.push("KMZ_DEFAULT");
+      if (!layerList.includes("OSM_ROADS")) layerList.push("OSM_ROADS");
 
       dxf.push("0", "TABLE");
       dxf.push("2", "LAYER");
-      dxf.push("70", allLayers.size.toString());
+      dxf.push("70", layerList.length.toString());
 
-      dxf.push("0", "LAYER", "2", "OSM_ROADS", "70", "0", "62", "4", "6", "CONTINUOUS");
-
-      detectedFolders.forEach(folder => {
-        dxf.push("0", "LAYER", "2", folder, "70", "0", "62", "1", "6", "CONTINUOUS");
-        dxf.push("0", "LAYER", "2", folder + "_POINTS", "70", "0", "62", "1", "6", "CONTINUOUS");
-        dxf.push("0", "LAYER", "2", folder + "_LABELS", "70", "0", "62", "2", "6", "CONTINUOUS");
+      layerList.forEach(layerName => {
+        const aci = layerName === "OSM_ROADS" ? "4" : "1";
+        dxf.push("0", "LAYER");
+        dxf.push("2", layerName);
+        dxf.push("70", "0");
+        dxf.push("62", aci);
+        dxf.push("6", "CONTINUOUS");
       });
 
       dxf.push("0", "ENDTAB");
       dxf.push("0", "ENDSEC");
 
+      // 3. ENTITIES SECTION
       dxf.push("0", "SECTION");
       dxf.push("2", "ENTITIES");
 
@@ -640,10 +615,9 @@
         }
       });
 
-      // 2. Ekspor Garis KMZ
+      // 2. Ekspor Garis KMZ (Polyline per layer folder)
       kmzLineFeatures.forEach(feat => {
         const geom = feat.geometry;
-        const colorACI = feat.properties._aciColor || 1;
         const targetLayer = feat.properties._folderLayer || "KMZ_DEFAULT";
 
         const processKmzLine = (coords) => {
@@ -651,7 +625,7 @@
             const pt = latLonToMeters(c[1], c[0], originLat, originLon);
             return { x: pt.x, y: pt.y };
           });
-          writePolyline(dxf, singlePts, targetLayer, colorACI);
+          writePolyline(dxf, singlePts, targetLayer, 1);
         };
 
         if (geom.type === "LineString") {
@@ -661,34 +635,30 @@
         }
       });
 
-      // 3. Ekspor Penanda (Titik & Teks Nama berada di Layer terpisah)
+      // 3. Ekspor Penanda (Point dan Text Terpisah Mandiri Per Layer Folder)
       pointFeatures.forEach(feat => {
         const [lon, lat] = feat.geometry.coordinates;
         const pt = latLonToMeters(lat, lon, originLat, originLon);
         const name = (feat.properties._cleanName || feat.properties.name || "PENANDA").replace(/[\r\n]+/g, " ");
-        const aciColor = feat.properties._aciColor || 1;
-        
-        const folderBase = feat.properties._folderLayer || "KMZ_DEFAULT";
-        const pointLayer = folderBase + "_POINTS";
-        const labelLayer = folderBase + "_LABELS";
+        const targetLayer = feat.properties._folderLayer || "KMZ_DEFAULT";
 
-        // Objek POINT di Layer _POINTS
+        // Murni Standalone Point Entity
         dxf.push("0", "POINT");
-        dxf.push("8", pointLayer);
-        dxf.push("62", aciColor.toString());
+        dxf.push("8", targetLayer);
         dxf.push("10", pt.x.toFixed(3));
         dxf.push("20", pt.y.toFixed(3));
         dxf.push("30", "0.0");
 
-        // Objek TEXT di Layer _LABELS
+        // Murni Standalone Text Entity (Dilengkapi alignment 72 & 73 untuk keterbacaan AutoCAD)
         dxf.push("0", "TEXT");
-        dxf.push("8", labelLayer);
-        dxf.push("62", aciColor.toString());
+        dxf.push("8", targetLayer);
         dxf.push("10", (pt.x + 2.5).toFixed(3));
         dxf.push("20", (pt.y + 0.5).toFixed(3));
         dxf.push("30", "0.0");
         dxf.push("40", textSize.toString());
         dxf.push("1", name);
+        dxf.push("72", "0");
+        dxf.push("73", "0");
       });
 
       dxf.push("0", "ENDSEC");
