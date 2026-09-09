@@ -7,6 +7,8 @@
 
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Leaflet Draw CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
   
   <!-- FontAwesome & Google Fonts -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
@@ -75,12 +77,16 @@
       width: 100%; padding: 10px; border: none; border-radius: 6px;
       font-weight: 600; font-size: 0.85rem; cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-      transition: background 0.2s;
+      transition: background 0.2s; margin-bottom: 6px;
     }
     .btn-primary { background: #0284c7; color: #fff; }
     .btn-primary:hover { background: #0369a1; }
     .btn-emerald { background: #10b981; color: #fff; }
     .btn-emerald:hover { background: #059669; }
+    .btn-secondary { background: #475569; color: #fff; }
+    .btn-secondary:hover { background: #334155; }
+    .btn-danger { background: #ef4444; color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
     .btn:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
 
     /* Map Area */
@@ -90,6 +96,7 @@
 
   <!-- JS Libraries -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/togeojson/0.16.0/togeojson.min.js"></script>
 </head>
@@ -116,8 +123,16 @@
 
           <p style="text-align: center; margin: 10px 0; font-size: 0.75rem; color: #64748b;">— TAMBAHKAN JALAN DARI MAP —</p>
 
+          <button class="btn btn-secondary" id="draw-box-btn" onclick="toggleDrawBox()">
+            <i class="fa-solid fa-vector-square"></i> Buat Kotak Seleksi Area Jalan
+          </button>
+          
+          <button class="btn btn-danger" id="clear-box-btn" onclick="clearSelectionBox()" style="display: none;">
+            <i class="fa-solid fa-trash-can"></i> Hapus Kotak Seleksi
+          </button>
+
           <button class="btn btn-emerald" id="fetch-osm-btn" onclick="fetchOSMData()">
-            <i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM (Area Peta)
+            <i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM
           </button>
         </div>
 
@@ -180,6 +195,38 @@
     let pointFeatures = [];
     let detectedFolders = new Set();
     let leafletLayerGroup = L.layerGroup().addTo(map);
+
+    // Variabel Seleksi Kotak Area
+    let drawnItems = new L.FeatureGroup().addTo(map);
+    let currentSelectionBounds = null;
+    let rectangleDrawer = null;
+
+    map.on(L.Draw.Event.CREATED, function (e) {
+      drawnItems.clearLayers();
+      const layer = e.layer;
+      drawnItems.addLayer(layer);
+      currentSelectionBounds = layer.getBounds();
+      document.getElementById('clear-box-btn').style.display = 'inline-flex';
+      document.getElementById('draw-box-btn').innerText = 'Ubah Kotak Seleksi Area';
+    });
+
+    function toggleDrawBox() {
+      if (rectangleDrawer) {
+        rectangleDrawer.disable();
+      }
+      rectangleDrawer = new L.Draw.Rectangle(map, {
+        shapeOptions: { color: '#38bdf8', weight: 2, fillColor: '#38bdf8', fillOpacity: 0.2 }
+      });
+      rectangleDrawer.enable();
+    }
+
+    function clearSelectionBox() {
+      drawnItems.clearLayers();
+      currentSelectionBounds = null;
+      if (rectangleDrawer) rectangleDrawer.disable();
+      document.getElementById('clear-box-btn').style.display = 'none';
+      document.getElementById('draw-box-btn').innerHTML = '<i class="fa-solid fa-vector-square"></i> Buat Kotak Seleksi Area Jalan';
+    }
 
     function latLonToMeters(lat, lon, originLat, originLon) {
       const R = 6378137;
@@ -272,6 +319,12 @@
     function processGeoJSON(data, isKMZ = false, styleMap = new Map(), placemarkFolderMap = new Map()) {
       if (!data.features) return;
 
+      if (isKMZ) {
+        kmzLineFeatures = [];
+        pointFeatures = [];
+        detectedFolders.clear();
+      }
+
       data.features.forEach(feat => {
         const gType = feat.geometry.type;
         const rawName = feat.properties.name || "PENANDA";
@@ -341,7 +394,7 @@
       leafletLayerGroup.addLayer(pointsLayer);
 
       const allLayersGroup = L.featureGroup([osmLayer, kmzLinesLayer, pointsLayer]);
-      if (allLayersGroup.getLayers().length > 0) {
+      if (allLayersGroup.getLayers().length > 0 && !currentSelectionBounds) {
         const bounds = allLayersGroup.getBounds();
         if (bounds.isValid()) {
           map.fitBounds(bounds, { padding: [50, 50] });
@@ -382,12 +435,11 @@
       }
     }
 
-    // PENGAMBILAN DATA OSM TEMBUS CORS (MENGGUNAKAN OVERPASS INTERPRETER VIA GET / SCRIPT INJECTION)
     function fetchOSMData() {
-      const bounds = map.getBounds();
+      const bounds = currentSelectionBounds || map.getBounds();
       
-      if (map.getZoom() < 13) {
-        alert("Area peta terlalu luas! Silakan zoom in peta ke area lokasi jalan terlebih dahulu.");
+      if (map.getZoom() < 13 && !currentSelectionBounds) {
+        alert("Area peta terlalu luas! Silakan zoom in peta ke area lokasi jalan atau gunakan Kotak Seleksi.");
         return;
       }
 
@@ -400,10 +452,7 @@
       const n = bounds.getNorth();
       const e = bounds.getEast();
 
-      // Query Overpass
       const q = `[out:json][timeout:25];way["highway"](${s},${w},${n},${e});out body;>;out skel qt;`;
-      
-      // Menggunakan Endpoint Overpass API Publik yang mendukung GET Request
       const url = "https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(q);
 
       fetch(url)
@@ -437,13 +486,12 @@
           });
 
           processGeoJSON({ type: "FeatureCollection", features: osmFeatures }, false);
-          btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM (Area Peta)';
+          btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM';
           btn.disabled = false;
         })
         .catch(err => {
           console.warn("Mencoba Endpoint Backup Overpass...", err);
           
-          // Endpoint Cadangan 2
           const backupUrl = "https://overpass.kumi.systems/api/interpreter?data=" + encodeURIComponent(q);
           fetch(backupUrl)
             .then(res => res.json())
@@ -469,12 +517,12 @@
               });
 
               processGeoJSON({ type: "FeatureCollection", features: osmFeatures }, false);
-              btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM (Area Peta)';
+              btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM';
               btn.disabled = false;
             })
             .catch(err2 => {
-              alert("Gagal mengambil data jalan dari server OSM. Mohon zoom in sedikit lagi agar wilayah lebih fokus.");
-              btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM (Area Peta)';
+              alert("Gagal mengambil data jalan dari server OSM. Mohon buat area kotak seleksi lebih kecil.");
+              btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM';
               btn.disabled = false;
             });
         });
@@ -535,38 +583,45 @@
       const roadScale = parseFloat(document.getElementById('opt-road-scale').value) || 1.0;
       const textSize = parseFloat(document.getElementById('opt-text-size').value) || 4.0;
 
+      // Penentuan Otomatis Titik Pusat (Origin Point)
       let originLat = -6.200000;
       let originLon = 106.816666;
 
-      if (pointFeatures.length > 0) {
-        const firstCoord = pointFeatures[0].geometry.coordinates;
-        originLon = firstCoord[0]; originLat = firstCoord[1];
-      } else if (kmzLineFeatures.length > 0) {
-        const firstCoord = kmzLineFeatures[0].geometry.coordinates[0];
-        originLon = firstCoord[0]; originLat = firstCoord[1];
-      } else if (osmRoadFeatures.length > 0) {
-        const firstCoord = osmRoadFeatures[0].geometry.coordinates[0];
-        originLon = firstCoord[0]; originLat = firstCoord[1];
+      if (pointFeatures.length > 0 && pointFeatures[0].geometry) {
+        const c = pointFeatures[0].geometry.coordinates;
+        originLon = c[0]; originLat = c[1];
+      } else if (kmzLineFeatures.length > 0 && kmzLineFeatures[0].geometry) {
+        const c = kmzLineFeatures[0].geometry.coordinates[0];
+        originLon = c[0]; originLat = c[1];
+      } else if (osmRoadFeatures.length > 0 && osmRoadFeatures[0].geometry) {
+        const c = osmRoadFeatures[0].geometry.coordinates[0];
+        originLon = c[0]; originLat = c[1];
       }
 
       let dxf = [];
 
-      dxf.push("0", "SECTION", "2", "HEADER");
-      dxf.push("9", "$ACADVER", "1", "AC1009");
+      // HEADER SECTION (DXF R12 Kompatibilitas Universal)
+      dxf.push("0", "SECTION");
+      dxf.push("2", "HEADER");
+      dxf.push("9", "$ACADVER");
+      dxf.push("1", "AC1009");
       dxf.push("0", "ENDSEC");
 
-      dxf.push("0", "SECTION", "2", "TABLES");
-      
-      const allLayers = new Set(["OSM_ROADS", "LABELS"]);
+      // TABLES SECTION
+      dxf.push("0", "SECTION");
+      dxf.push("2", "TABLES");
+
+      const allLayers = new Set(["OSM_ROADS"]);
       detectedFolders.forEach(folder => {
         allLayers.add(folder);
         allLayers.add(folder + "_POINTS");
       });
 
-      dxf.push("0", "TABLE", "2", "LAYER", "70", allLayers.size.toString());
-      
+      dxf.push("0", "TABLE");
+      dxf.push("2", "LAYER");
+      dxf.push("70", allLayers.size.toString());
+
       dxf.push("0", "LAYER", "2", "OSM_ROADS", "70", "0", "62", "4", "6", "CONTINUOUS");
-      dxf.push("0", "LAYER", "2", "LABELS", "70", "0", "62", "2", "6", "CONTINUOUS");
 
       detectedFolders.forEach(folder => {
         dxf.push("0", "LAYER", "2", folder, "70", "0", "62", "1", "6", "CONTINUOUS");
@@ -576,9 +631,11 @@
       dxf.push("0", "ENDTAB");
       dxf.push("0", "ENDSEC");
 
-      dxf.push("0", "SECTION", "2", "BLOCKS", "0", "ENDSEC");
-      dxf.push("0", "SECTION", "2", "ENTITIES");
+      // ENTITIES SECTION
+      dxf.push("0", "SECTION");
+      dxf.push("2", "ENTITIES");
 
+      // 1. Ekspor Jalan OSM
       osmRoadFeatures.forEach(feat => {
         const geom = feat.geometry;
         const hwType = feat.properties.highway || 'residential';
@@ -588,8 +645,8 @@
         const processOsmLine = (coords) => {
           const offsetRes = computeParallelRoadOffsets(coords, halfWidth, originLat, originLon);
           if (offsetRes) {
-            writeRawPolyline(dxf, offsetRes.leftPts, "OSM_ROADS", 4);
-            writeRawPolyline(dxf, offsetRes.rightPts, "OSM_ROADS", 4);
+            writePolyline(dxf, offsetRes.leftPts, "OSM_ROADS", 4);
+            writePolyline(dxf, offsetRes.rightPts, "OSM_ROADS", 4);
           }
         };
 
@@ -600,6 +657,7 @@
         }
       });
 
+      // 2. Ekspor Garis KMZ
       kmzLineFeatures.forEach(feat => {
         const geom = feat.geometry;
         const colorACI = feat.properties._aciColor || 1;
@@ -610,7 +668,7 @@
             const pt = latLonToMeters(c[1], c[0], originLat, originLon);
             return { x: pt.x, y: pt.y };
           });
-          writeRawPolyline(dxf, singlePts, targetLayer, colorACI);
+          writePolyline(dxf, singlePts, targetLayer, colorACI);
         };
 
         if (geom.type === "LineString") {
@@ -620,6 +678,7 @@
         }
       });
 
+      // 3. Ekspor Penanda (Titik & Teks Nama berada dalam 1 Layer)
       pointFeatures.forEach(feat => {
         const [lon, lat] = feat.geometry.coordinates;
         const pt = latLonToMeters(lat, lon, originLat, originLon);
@@ -627,6 +686,7 @@
         const aciColor = feat.properties._aciColor || 1;
         const targetLayer = (feat.properties._folderLayer || "KMZ_DEFAULT") + "_POINTS";
 
+        // Objek POINT
         dxf.push("0", "POINT");
         dxf.push("8", targetLayer);
         dxf.push("62", aciColor.toString());
@@ -634,17 +694,10 @@
         dxf.push("20", pt.y.toFixed(3));
         dxf.push("30", "0.0");
 
-        dxf.push("0", "CIRCLE");
+        // Objek TEXT (Teks Nama Penanda berada di layer yang sama dengan Point)
+        dxf.push("0", "TEXT");
         dxf.push("8", targetLayer);
         dxf.push("62", aciColor.toString());
-        dxf.push("10", pt.x.toFixed(3));
-        dxf.push("20", pt.y.toFixed(3));
-        dxf.push("30", "0.0");
-        dxf.push("40", "2.0");
-
-        dxf.push("0", "TEXT");
-        dxf.push("8", "LABELS");
-        dxf.push("62", "2");
         dxf.push("10", (pt.x + 2.5).toFixed(3));
         dxf.push("20", (pt.y + 0.5).toFixed(3));
         dxf.push("30", "0.0");
@@ -667,7 +720,7 @@
       URL.revokeObjectURL(url);
     }
 
-    function writeRawPolyline(dxfArray, pointArray, layerName, colorIndex) {
+    function writePolyline(dxfArray, pointArray, layerName, colorIndex) {
       if (!pointArray || pointArray.length < 2) return;
 
       dxfArray.push("0", "POLYLINE");
