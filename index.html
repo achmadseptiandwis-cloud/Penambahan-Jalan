@@ -207,7 +207,7 @@
       drawnItems.addLayer(layer);
       currentSelectionBounds = layer.getBounds();
       document.getElementById('clear-box-btn').style.display = 'inline-flex';
-      document.getElementById('draw-box-btn').innerText = 'Ubah Kotak Seleksi Area';
+      document.getElementById('draw-box-btn').innerHTML = '<i class="fa-solid fa-vector-square"></i> Ubah Kotak Seleksi Area';
     });
 
     function toggleDrawBox() {
@@ -435,11 +435,12 @@
       }
     }
 
-    function fetchOSMData() {
+    async function fetchOSMData() {
+      // Bebas zoom: Menggunakan area kotak seleksi jika ada, atau tampilan peta
       const bounds = currentSelectionBounds || map.getBounds();
       
-      if (map.getZoom() < 13 && !currentSelectionBounds) {
-        alert("Area peta terlalu luas! Silakan zoom in peta ke area lokasi jalan atau gunakan Kotak Seleksi.");
+      if (!currentSelectionBounds && map.getZoom() < 13) {
+        alert("Area peta terlalu luas! Silakan zoom in peta ke area lokasi jalan atau gunakan 'Buat Kotak Seleksi Area Jalan'.");
         return;
       }
 
@@ -452,80 +453,63 @@
       const n = bounds.getNorth();
       const e = bounds.getEast();
 
-      const q = `[out:json][timeout:25];way["highway"](${s},${w},${n},${e});out body;>;out skel qt;`;
-      const url = "https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(q);
+      // Kueri Ringan & Cepat (out geom)
+      const q = `[out:json][timeout:30];way["highway"](${s},${w},${n},${e});out geom;`;
 
-      fetch(url)
-        .then(res => {
+      // Daftar Endpoint Server Overpass Publik Terpercaya
+      const endpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+      ];
+
+      let success = false;
+
+      for (let i = 0; i < endpoints.length; i++) {
+        try {
+          const url = endpoints[i] + "?data=" + encodeURIComponent(q);
+          const res = await fetch(url);
           if (!res.ok) throw new Error("HTTP Status " + res.status);
-          return res.json();
-        })
-        .then(data => {
-          if (!data || !data.elements) throw new Error("Data OSM kosong");
-
-          const nodes = {};
-          data.elements.forEach(el => {
-            if (el.type === "node") nodes[el.id] = [el.lon, el.lat];
-          });
+          
+          const data = await res.json();
+          if (!data || !data.elements || data.elements.length === 0) {
+            throw new Error("Data jalan OSM tidak ditemukan di area ini.");
+          }
 
           const osmFeatures = [];
           data.elements.forEach(el => {
-            if (el.type === "way" && el.nodes) {
-              const coords = el.nodes.map(nid => nodes[nid]).filter(c => c !== undefined);
-              if (coords.length > 1) {
-                osmFeatures.push({
-                  type: "Feature",
-                  geometry: { type: "LineString", coordinates: coords },
-                  properties: { 
-                    name: el.tags ? el.tags.name || "Road" : "Road",
-                    highway: el.tags ? el.tags.highway || "residential" : "residential"
-                  }
-                });
-              }
+            if (el.type === "way" && el.geometry && el.geometry.length > 1) {
+              const coords = el.geometry.map(pt => [pt.lon, pt.lat]);
+              osmFeatures.push({
+                type: "Feature",
+                geometry: { type: "LineString", coordinates: coords },
+                properties: { 
+                  name: el.tags ? el.tags.name || "Road" : "Road",
+                  highway: el.tags ? el.tags.highway || "residential" : "residential"
+                }
+              });
             }
           });
+
+          if (osmFeatures.length === 0) {
+            throw new Error("Tidak ada fitur garis jalan yang dapat diproses.");
+          }
 
           processGeoJSON({ type: "FeatureCollection", features: osmFeatures }, false);
           btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM';
           btn.disabled = false;
-        })
-        .catch(err => {
-          console.warn("Mencoba Endpoint Backup Overpass...", err);
-          
-          const backupUrl = "https://overpass.kumi.systems/api/interpreter?data=" + encodeURIComponent(q);
-          fetch(backupUrl)
-            .then(res => res.json())
-            .then(data => {
-              const nodes = {};
-              data.elements.forEach(el => { if (el.type === "node") nodes[el.id] = [el.lon, el.lat]; });
+          success = true;
+          break; // Berhasil, keluar dari loop server
+        } catch (err) {
+          console.warn(`Gagal dari endpoint ${endpoints[i]}:`, err.message);
+        }
+      }
 
-              const osmFeatures = [];
-              data.elements.forEach(el => {
-                if (el.type === "way" && el.nodes) {
-                  const coords = el.nodes.map(nid => nodes[nid]).filter(c => c !== undefined);
-                  if (coords.length > 1) {
-                    osmFeatures.push({
-                      type: "Feature",
-                      geometry: { type: "LineString", coordinates: coords },
-                      properties: { 
-                        name: el.tags ? el.tags.name || "Road" : "Road",
-                        highway: el.tags ? el.tags.highway || "residential" : "residential"
-                      }
-                    });
-                  }
-                }
-              });
-
-              processGeoJSON({ type: "FeatureCollection", features: osmFeatures }, false);
-              btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM';
-              btn.disabled = false;
-            })
-            .catch(err2 => {
-              alert("Gagal mengambil data jalan dari server OSM. Mohon buat area kotak seleksi lebih kecil.");
-              btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM';
-              btn.disabled = false;
-            });
-        });
+      if (!success) {
+        alert("Gagal mengambil data dari server OSM. Mohon buat Kotak Seleksi dengan ukuran yang sedikit lebih kecil.");
+        btn.innerHTML = '<i class="fa-solid fa-cloud-download-alt"></i> Ambil Jalan OSM';
+        btn.disabled = false;
+      }
     }
 
     function computeParallelRoadOffsets(coordList, distance, originLat, originLon) {
@@ -600,14 +584,12 @@
 
       let dxf = [];
 
-      // HEADER SECTION (DXF R12 Kompatibilitas Universal)
       dxf.push("0", "SECTION");
       dxf.push("2", "HEADER");
       dxf.push("9", "$ACADVER");
       dxf.push("1", "AC1009");
       dxf.push("0", "ENDSEC");
 
-      // TABLES SECTION
       dxf.push("0", "SECTION");
       dxf.push("2", "TABLES");
 
@@ -615,6 +597,7 @@
       detectedFolders.forEach(folder => {
         allLayers.add(folder);
         allLayers.add(folder + "_POINTS");
+        allLayers.add(folder + "_LABELS"); // Dipisah agar LAYOFF bekerja independen
       });
 
       dxf.push("0", "TABLE");
@@ -626,12 +609,12 @@
       detectedFolders.forEach(folder => {
         dxf.push("0", "LAYER", "2", folder, "70", "0", "62", "1", "6", "CONTINUOUS");
         dxf.push("0", "LAYER", "2", folder + "_POINTS", "70", "0", "62", "1", "6", "CONTINUOUS");
+        dxf.push("0", "LAYER", "2", folder + "_LABELS", "70", "0", "62", "2", "6", "CONTINUOUS");
       });
 
       dxf.push("0", "ENDTAB");
       dxf.push("0", "ENDSEC");
 
-      // ENTITIES SECTION
       dxf.push("0", "SECTION");
       dxf.push("2", "ENTITIES");
 
@@ -678,25 +661,28 @@
         }
       });
 
-      // 3. Ekspor Penanda (Titik & Teks Nama berada dalam 1 Layer)
+      // 3. Ekspor Penanda (Titik & Teks Nama berada di Layer terpisah)
       pointFeatures.forEach(feat => {
         const [lon, lat] = feat.geometry.coordinates;
         const pt = latLonToMeters(lat, lon, originLat, originLon);
         const name = (feat.properties._cleanName || feat.properties.name || "PENANDA").replace(/[\r\n]+/g, " ");
         const aciColor = feat.properties._aciColor || 1;
-        const targetLayer = (feat.properties._folderLayer || "KMZ_DEFAULT") + "_POINTS";
+        
+        const folderBase = feat.properties._folderLayer || "KMZ_DEFAULT";
+        const pointLayer = folderBase + "_POINTS";
+        const labelLayer = folderBase + "_LABELS";
 
-        // Objek POINT
+        // Objek POINT di Layer _POINTS
         dxf.push("0", "POINT");
-        dxf.push("8", targetLayer);
+        dxf.push("8", pointLayer);
         dxf.push("62", aciColor.toString());
         dxf.push("10", pt.x.toFixed(3));
         dxf.push("20", pt.y.toFixed(3));
         dxf.push("30", "0.0");
 
-        // Objek TEXT (Teks Nama Penanda berada di layer yang sama dengan Point)
+        // Objek TEXT di Layer _LABELS
         dxf.push("0", "TEXT");
-        dxf.push("8", targetLayer);
+        dxf.push("8", labelLayer);
         dxf.push("62", aciColor.toString());
         dxf.push("10", (pt.x + 2.5).toFixed(3));
         dxf.push("20", (pt.y + 0.5).toFixed(3));
